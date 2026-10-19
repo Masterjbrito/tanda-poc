@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#FBF6EE">
+<title>TANDA</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icones/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icones/favicon-32.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="TANDA">
+<style>
+  *{box-sizing:border-box}
+  button,input{font-family:inherit}
+  .junto{white-space:nowrap}
+  html,body{margin:0;height:100%;overscroll-behavior:none}
+  body{background:#FBF6EE;color:#1F2A44;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:grid;place-items:center;padding:24px;-webkit-tap-highlight-color:transparent}
+  .caixa{width:min(380px,100%);background:#fff;border-radius:28px;padding:32px 28px;box-shadow:0 1px 2px rgba(31,42,68,.06),0 18px 48px rgba(31,42,68,.12)}
+  .marca{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+  .marca img{width:44px;height:44px;border-radius:12px}
+  h1{font-size:26px;margin:0;font-weight:800;letter-spacing:-.01em}
+  p{color:#4A5570;margin:8px 0 22px;line-height:1.45}
+  label.campo{display:block;font-size:14px;font-weight:600;color:#4A5570;margin-bottom:6px}
+  input[type=password]{width:100%;min-height:52px;border-radius:14px;border:1.5px solid rgba(31,42,68,.18);padding:0 16px;font-size:18px;color:#1F2A44;background:#fff}
+  input[type=password]:focus{outline:none;border-color:#8A93A8;box-shadow:0 0 0 4px rgba(142,184,229,.35)}
+  .lembrar{display:flex;align-items:center;gap:10px;margin:14px 0 20px;font-size:15px;color:#4A5570}
+  .lembrar input{width:20px;height:20px;accent-color:#1F2A44}
+  button{width:100%;min-height:54px;border:0;border-radius:999px;background:#F2A541;color:#1F2A44;font-size:18px;font-weight:800;cursor:pointer}
+  button:disabled{opacity:.6}
+  .erro{color:#C97F1E;font-weight:600;min-height:1.4em;margin:12px 0 0;text-align:center}
+  .rodape{margin-top:18px;font-size:12px;color:#8A93A8;text-align:center}
+  .a-abrir .caixa{display:none}
+  .aguarde{display:none;font-weight:600;color:#4A5570}.a-abrir .aguarde{display:block}
+</style>
+</head>
+<body class="a-abrir">
+<p class="aguarde">A abrir a TANDA…</p>
+<main class="caixa" data-testid="porta">
+  <div class="marca"><img src="icones/icon-192.png" alt=""><h1>TANDA</h1></div>
+  <p>Versão de teste privada. Escreva a <span class="junto">palavra-passe</span> que recebeu.</p>
+  <form id="entrar" autocomplete="on">
+    <label class="campo" for="senha">Palavra-passe</label>
+    <input id="senha" name="senha" type="password" autocomplete="current-password" autocapitalize="none" spellcheck="false" required>
+    <label class="lembrar"><input id="lembrar" type="checkbox" checked> Lembrar neste aparelho</label>
+    <button type="submit">Entrar</button>
+    <p class="erro" id="erro" role="alert" aria-live="polite"></p>
+  </form>
+  <div class="rodape">Conteúdo protegido · funciona sem internet depois da primeira vez</div>
+</main>
+<script>
+(function () {
+  var subtle = window.crypto && window.crypto.subtle;
+  var erro = document.getElementById('erro');
+  function bytes(s) { var b = atob(s), u = new Uint8Array(b.length); for (var i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
+  function mostrar() { document.body.classList.remove('a-abrir'); var s = document.getElementById('senha'); if (s) s.focus(); }
+  function falarComSw(sw, msg) {
+    return new Promise(function (ok, falha) {
+      var canal = new MessageChannel();
+      canal.port1.onmessage = function (e) { ok(e.data); };
+      setTimeout(function () { falha(new Error('sem resposta')); }, 5000);
+      sw.postMessage(msg, [canal.port2].concat(msg.bytes ? [msg.bytes] : []));
+    });
+  }
+  if (!subtle || !('serviceWorker' in navigator)) { mostrar(); erro.textContent = 'Abra este link por https, num navegador atual.'; return; }
+
+  var registo = navigator.serviceWorker.register('sw.js');
+  var cofre = fetch('cofre.json', { cache: 'no-cache' }).then(function (r) { return r.json(); });
+
+  // Se o service worker já tem a chave («lembrar»), recarrega uma vez para ele servir a app.
+  navigator.serviceWorker.ready.then(function (reg) { return falarComSw(reg.active, { tipo: 'tem-chave' }); })
+    .then(function (r) {
+      if (r && r.tem && !sessionStorage.getItem('tanda.poc.recarregou')) { sessionStorage.setItem('tanda.poc.recarregou', '1'); location.reload(); }
+      else mostrar();
+    }).catch(mostrar);
+
+  document.getElementById('entrar').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var botao = this.querySelector('button');
+    botao.disabled = true; erro.textContent = '';
+    var lembrar = document.getElementById('lembrar').checked;
+    var senha = document.getElementById('senha').value;
+    cofre.then(function (C) {
+      return subtle.importKey('raw', new TextEncoder().encode(senha), 'PBKDF2', false, ['deriveKey']).then(function (base) {
+        return subtle.deriveKey({ name: 'PBKDF2', salt: bytes(C.sal), iterations: C.it, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, true, ['decrypt']);
+      }).then(function (chave) {
+        var v = bytes(C.verificador);
+        return subtle.decrypt({ name: 'AES-GCM', iv: v.slice(0, 12) }, chave, v.slice(12)).then(function () { return subtle.exportKey('raw', chave); });
+      });
+    }).then(function (cru) {
+      return registo.then(function () { return navigator.serviceWorker.ready; })
+        .then(function (reg) { return falarComSw(reg.active, { tipo: 'chave', bytes: cru, lembrar: lembrar }); });
+    }).then(function () {
+      sessionStorage.setItem('tanda.poc.recarregou', '1');
+      location.reload();
+    }).catch(function () {
+      botao.disabled = false; erro.textContent = 'Palavra-passe errada. Tente outra vez.';
+    });
+  });
+})();
+</script>
+</body>
+</html>
