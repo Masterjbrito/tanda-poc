@@ -37,7 +37,7 @@
   .aguarde{display:none;font-weight:600;color:#4A5570}.a-abrir .aguarde{display:block}
 </style>
 </head>
-<body class="a-abrir">
+<body>
 <p class="aguarde">A abrir a TANDA…</p>
 <main class="caixa" data-testid="porta">
   <div class="marca"><img src="icones/icon-192.png" alt=""><h1>TANDA</h1></div>
@@ -70,12 +70,13 @@
   var registo = navigator.serviceWorker.register('sw.js');
   var cofre = fetch('cofre.json', { cache: 'no-cache' }).then(function (r) { return r.json(); });
 
-  // Se o service worker já tem a chave («lembrar»), recarrega uma vez para ele servir a app.
+  // O formulário aparece logo; na 1.ª visita o service worker ainda está a guardar a app para funcionar sem internet.
+  // Se ele já tiver a chave («lembrar»), recarrega uma vez para servir a app.
+  mostrar();
   navigator.serviceWorker.ready.then(function (reg) { return falarComSw(reg.active, { tipo: 'tem-chave' }); })
     .then(function (r) {
       if (r && r.tem && !sessionStorage.getItem('tanda.poc.recarregou')) { sessionStorage.setItem('tanda.poc.recarregou', '1'); location.reload(); }
-      else mostrar();
-    }).catch(mostrar);
+    }).catch(function () {});
 
   document.getElementById('entrar').addEventListener('submit', function (ev) {
     ev.preventDefault();
@@ -91,13 +92,14 @@
         return subtle.decrypt({ name: 'AES-GCM', iv: v.slice(0, 12) }, chave, v.slice(12)).then(function () { return subtle.exportKey('raw', chave); });
       });
     }).then(function (cru) {
+      botao.textContent = 'A preparar a app…';
       return registo.then(function () { return navigator.serviceWorker.ready; })
         .then(function (reg) { return falarComSw(reg.active, { tipo: 'chave', bytes: cru, lembrar: lembrar }); });
     }).then(function () {
       sessionStorage.setItem('tanda.poc.recarregou', '1');
       location.reload();
     }).catch(function () {
-      botao.disabled = false; erro.textContent = 'Palavra-passe errada. Tente outra vez.';
+      botao.disabled = false; botao.textContent = 'Entrar'; erro.textContent = 'Palavra-passe errada. Tente outra vez.';
     });
   });
 })();

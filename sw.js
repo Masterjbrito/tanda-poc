@@ -1,7 +1,7 @@
 // Service worker do cofre (spec 12.2). Guarda os ficheiros cifrados; com a chave, decifra-os ao servir.
 // A chave entra pela porta (postMessage) e importa-se como CryptoKey NÃO-extraível; com «lembrar», fica no
 // IndexedDB deste service worker. Sem chave: as navegações recebem a porta e os ficheiros do cofre dão 403.
-const VERSAO = '2d85d533ab81';
+const VERSAO = 'a2ef18d19bc7';
 const CACHE = 'tanda-poc-' + VERSAO;
 const ESCOPO = new URL(self.registration.scope).pathname;           // ex.: /tanda-poc/
 let chave = null;
