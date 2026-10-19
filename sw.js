@@ -1,9 +1,11 @@
 // Service worker do cofre (spec 12.2). Guarda os ficheiros cifrados; com a chave, decifra-os ao servir.
-// A chave entra pela porta (postMessage) e importa-se como CryptoKey NÃO-extraível; com «lembrar», fica no
-// IndexedDB deste service worker. Sem chave: as navegações recebem a porta e os ficheiros do cofre dão 403.
-const VERSAO = 'a2ef18d19bc7';
+// A chave entra pela porta (postMessage) e importa-se como CryptoKey NÃO-extraível e fica sempre no IndexedDB deste
+// service worker (o navegador para-o ao fim de ≈ 30 s parado e a memória perde-se). Com «lembrar» não expira; sem
+// «lembrar», expira ao fim de 30 min sem uso. Sem chave: as navegações recebem a porta e o cofre dá 403.
+const VERSAO = '851fd2620803';
 const CACHE = 'tanda-poc-' + VERSAO;
 const ESCOPO = new URL(self.registration.scope).pathname;           // ex.: /tanda-poc/
+const SESSAO_MS = 30 * 60 * 1000;
 let chave = null;
 let cofre = null;
 
@@ -19,13 +21,18 @@ async function lerChaveGuardada() {
   const d = await abrirBase();
   return new Promise(ok => { const q = d.transaction('chave').objectStore('chave').get('k'); q.onsuccess = () => ok(q.result || null); q.onerror = () => ok(null); });
 }
-async function guardarChave(k) {
+async function guardarChave(registo) {
   const d = await abrirBase();
-  return new Promise(ok => { const t = d.transaction('chave', 'readwrite'); t.objectStore('chave').put(k, 'k'); t.oncomplete = () => ok(); t.onerror = () => ok(); });
+  return new Promise(ok => { const t = d.transaction('chave', 'readwrite'); t.objectStore('chave').put(registo, 'k'); t.oncomplete = () => ok(); t.onerror = () => ok(); });
 }
+// registo = { k: CryptoKey, expira: ms | null }; null = «lembrar» (não expira)
 async function obterChave() {
   if (!chave) chave = await lerChaveGuardada();
-  return chave;
+  if (!chave) return null;
+  if (!('k' in chave)) chave = { k: chave, expira: null };   // versão anterior: guardava só a CryptoKey («lembrar»)
+  if (chave.expira !== null && Date.now() > chave.expira) { chave = null; await guardarChave(null); return null; }
+  if (chave.expira !== null) { chave.expira = Date.now() + SESSAO_MS; void guardarChave(chave); }
+  return chave.k;
 }
 async function obterCofre() {
   if (cofre) return cofre;
@@ -42,8 +49,10 @@ self.addEventListener('install', ev => {
     const c = await caches.open(CACHE);
     await c.put(ESCOPO + 'cofre.json', r);
     const claros = ['', 'index.html', 'manifest.webmanifest', 'icones/icon-192.png', 'icones/apple-touch-icon.png', 'icones/favicon-32.png'];
-    await c.addAll(claros.map(p => ESCOPO + p));
-    await c.addAll(Object.keys(C.ficheiros).map(p => ESCOPO + p));
+    // cache: 'reload' — nunca a cache HTTP do navegador (o Pages manda max-age=600: uma publicação recente
+    // misturaria um app.html antigo com bundles novos)
+    await c.addAll(claros.map(p => new Request(ESCOPO + p, { cache: 'reload' })));
+    await c.addAll(Object.keys(C.ficheiros).map(p => new Request(ESCOPO + p, { cache: 'reload' })));
     await self.skipWaiting();
   })());
 });
@@ -61,8 +70,9 @@ self.addEventListener('message', ev => {
   (async () => {
     if (d.tipo === 'tem-chave') return porta.postMessage({ tem: !!(await obterChave()) });
     if (d.tipo === 'chave') {
-      chave = await crypto.subtle.importKey('raw', d.bytes, { name: 'AES-GCM' }, false, ['decrypt']);
-      if (d.lembrar) await guardarChave(chave);
+      const k = await crypto.subtle.importKey('raw', d.bytes, { name: 'AES-GCM' }, false, ['decrypt']);
+      chave = { k, expira: d.lembrar ? null : Date.now() + SESSAO_MS };
+      await guardarChave(chave);
       return porta.postMessage({ ok: true });
     }
   })().catch(() => porta && porta.postMessage({ ok: false }));

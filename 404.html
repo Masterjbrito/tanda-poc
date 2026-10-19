@@ -93,13 +93,18 @@
       });
     }).then(function (cru) {
       botao.textContent = 'A preparar a app…';
-      return registo.then(function () { return navigator.serviceWorker.ready; })
+      // na 1.ª visita o service worker guarda a app inteira; numa rede má pode falhar: não deixar o botão preso
+      var esgotado = new Promise(function (_, falha) { setTimeout(function () { falha(new Error('preparar')); }, 90000); });
+      return Promise.race([registo.then(function () { return navigator.serviceWorker.ready; }), esgotado])
         .then(function (reg) { return falarComSw(reg.active, { tipo: 'chave', bytes: cru, lembrar: lembrar }); });
     }).then(function () {
       sessionStorage.setItem('tanda.poc.recarregou', '1');
       location.reload();
-    }).catch(function () {
-      botao.disabled = false; botao.textContent = 'Entrar'; erro.textContent = 'Palavra-passe errada. Tente outra vez.';
+    }).catch(function (e) {
+      botao.disabled = false; botao.textContent = 'Entrar';
+      erro.textContent = e && e.message === 'preparar'
+        ? 'Não foi possível preparar a app. Verifique a internet e tente outra vez.'
+        : 'Palavra-passe errada. Tente outra vez.';
     });
   });
 })();
