@@ -32,6 +32,7 @@
   button{width:100%;min-height:54px;border:0;border-radius:999px;background:#F2A541;color:#1F2A44;font-size:18px;font-weight:800;cursor:pointer}
   button:disabled{opacity:.6}
   .erro{color:#C97F1E;font-weight:600;min-height:1.4em;margin:12px 0 0;text-align:center}
+  .detalhe{display:block;font-weight:400;font-size:12px;color:#8A93A8;margin-top:4px;word-break:break-word}
   .rodape{margin-top:18px;font-size:12px;color:#8A93A8;text-align:center}
   .a-abrir .caixa{display:none}
   .aguarde{display:none;font-weight:600;color:#4A5570}.a-abrir .aguarde{display:block}
@@ -42,7 +43,7 @@
 <main class="caixa" data-testid="porta">
   <div class="marca"><img src="icones/icon-192.png" alt=""><h1>TANDA</h1></div>
   <p>Versão de teste privada. Escreva a <span class="junto">palavra-passe</span> que recebeu.</p>
-  <form id="entrar" autocomplete="on">
+  <form id="entrar" autocomplete="on" action="javascript:void(0)">
     <label class="campo" for="senha">Palavra-passe</label>
     <input id="senha" name="senha" type="password" autocomplete="current-password" autocapitalize="none" spellcheck="false" required>
     <label class="lembrar"><input id="lembrar" type="checkbox" checked> Lembrar neste aparelho</label>
@@ -65,10 +66,39 @@
       sw.postMessage(msg, [canal.port2].concat(msg.bytes ? [msg.bytes] : []));
     });
   }
-  if (!subtle || !('serviceWorker' in navigator)) { mostrar(); erro.textContent = 'Abra este link por https, num navegador atual.'; return; }
+  // Cada falha tem a sua mensagem (antes, quase tudo aparecia como «palavra-passe errada»).
+  var NAVEGADOR = 'Este navegador não deixou instalar a app. No iPhone, abra o link no Safari (não dentro do WhatsApp, do Gmail ou de outra app) e fora da navegação privada.';
+  var MENSAGENS = {
+    senha: 'Palavra-passe errada. Tente outra vez.',
+    preparar: 'Não foi possível preparar a app. Verifique a internet e tente outra vez.',
+    rede: 'Sem ligação à internet. Ligue-se e tente outra vez.'
+  };
+  function falhar(codigo, detalhe) { var e = new Error(codigo); e.detalhe = detalhe; return e; }
+  function mostrarErro(e) {
+    var codigo = (e && e.message) || 'desconhecido';
+    erro.textContent = MENSAGENS[codigo] || NAVEGADOR;
+    if (!MENSAGENS[codigo] || codigo === 'preparar') {
+      var d = document.createElement('span'); d.className = 'detalhe';
+      d.textContent = ' (' + codigo + (e && e.detalhe ? ': ' + e.detalhe : '') + ')';
+      erro.appendChild(d);
+    }
+  }
+  if (!subtle || !('serviceWorker' in navigator)) {
+    var semSw = falhar('sem-service-worker', subtle ? 'navigator.serviceWorker' : 'crypto.subtle');
+    mostrar(); mostrarErro(semSw);
+    // o formulário nunca se submete sozinho (levaria a palavra-passe no endereço)
+    document.getElementById('entrar').addEventListener('submit', function (ev) { ev.preventDefault(); erro.textContent = ''; mostrarErro(semSw); });
+    return;
+  }
 
-  var registo = navigator.serviceWorker.register('sw.js');
-  var cofre = fetch('cofre.json', { cache: 'no-cache' }).then(function (r) { return r.json(); });
+  // o registo responde em segundos; se não responder (navegador que não deixa), não esperar pelos 90 s da instalação
+  var registo = Promise.race([
+    navigator.serviceWorker.register('sw.js'),
+    new Promise(function (_, falha) { setTimeout(function () { falha(new Error('sem resposta em 10 s')); }, 10000); })
+  ]).catch(function (e) { throw falhar('registo', (e && ((e.name || '') + ' ' + e.message).trim()) || ''); });
+  registo.catch(function () {});
+  var cofre = fetch('cofre.json', { cache: 'no-cache' }).then(function (r) { return r.json(); }).catch(function () { throw falhar('rede'); });
+  cofre.catch(function () {});
 
   // O formulário aparece logo; na 1.ª visita o service worker ainda está a guardar a app para funcionar sem internet.
   // Se ele já tiver a chave («lembrar»), recarrega uma vez para servir a app.
@@ -89,22 +119,25 @@
         return subtle.deriveKey({ name: 'PBKDF2', salt: bytes(C.sal), iterations: C.it, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, true, ['decrypt']);
       }).then(function (chave) {
         var v = bytes(C.verificador);
-        return subtle.decrypt({ name: 'AES-GCM', iv: v.slice(0, 12) }, chave, v.slice(12)).then(function () { return subtle.exportKey('raw', chave); });
+        return subtle.decrypt({ name: 'AES-GCM', iv: v.slice(0, 12) }, chave, v.slice(12))
+          .then(function () { return subtle.exportKey('raw', chave); }, function () { throw falhar('senha'); });
       });
     }).then(function (cru) {
       botao.textContent = 'A preparar a app…';
       // na 1.ª visita o service worker guarda a app inteira; numa rede má pode falhar: não deixar o botão preso
       var esgotado = new Promise(function (_, falha) { setTimeout(function () { falha(new Error('preparar')); }, 90000); });
-      return Promise.race([registo.then(function () { return navigator.serviceWorker.ready; }), esgotado])
-        .then(function (reg) { return falarComSw(reg.active, { tipo: 'chave', bytes: cru, lembrar: lembrar }); });
+      return registo.then(function () { return Promise.race([navigator.serviceWorker.ready, esgotado]); })
+        .then(function (reg) {
+          if (!reg.active) throw falhar('sem-sw-ativo');
+          return falarComSw(reg.active, { tipo: 'chave', bytes: cru, lembrar: lembrar }).catch(function (e) { throw falhar('sw-sem-resposta', e && e.message); });
+        })
+        .then(function (r) { if (!r || r.ok !== true) throw falhar('sw-recusou-chave'); });
     }).then(function () {
       sessionStorage.setItem('tanda.poc.recarregou', '1');
       location.reload();
     }).catch(function (e) {
       botao.disabled = false; botao.textContent = 'Entrar';
-      erro.textContent = e && e.message === 'preparar'
-        ? 'Não foi possível preparar a app. Verifique a internet e tente outra vez.'
-        : 'Palavra-passe errada. Tente outra vez.';
+      mostrarErro(e);
     });
   });
 })();
