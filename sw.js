@@ -2,7 +2,7 @@
 // A chave entra pela porta (postMessage) e importa-se como CryptoKey NÃO-extraível e fica sempre no IndexedDB deste
 // service worker (o navegador para-o ao fim de ≈ 30 s parado e a memória perde-se). Com «lembrar» não expira; sem
 // «lembrar», expira ao fim de 30 min sem uso. Sem chave: as navegações recebem a porta e o cofre dá 403.
-const VERSAO = '7a38a1679208';
+const VERSAO = '883e3a43735f';
 const CACHE = 'tanda-poc-' + VERSAO;
 const ESCOPO = new URL(self.registration.scope).pathname;           // ex.: /tanda-poc/
 const SESSAO_MS = 30 * 60 * 1000;
